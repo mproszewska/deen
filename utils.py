@@ -1,7 +1,8 @@
 """
 Utility methods.
 """
-from typing import Dict, List
+
+from typing import Dict, List, TypeVar, Tuple, Optional
 
 import networkx as nx
 import numpy as np
@@ -11,14 +12,17 @@ import pulp
 import torch
 
 
-def str_to_list(s: str, dtype=int) -> List:
+def str_to_list(s: str, dtype: TypeVar = int) -> List:
     s = s.replace("[", "").replace("]", "")
     if not s:
         return []
     return [dtype(t) for t in s.split(",")]
 
 
-def build_regions_graph(full=False, exponent=1.0):
+def build_regions_graph() -> nx.Graph:
+    """
+    Builds regions graph from graphml data
+    """
     G = nx.read_graphml("data/regions/graph.graphml")
     remove = [node for node, degree in dict(G.degree()).items() if degree == 0]
     G.remove_nodes_from(remove)
@@ -32,7 +36,7 @@ def build_regions_graph(full=False, exponent=1.0):
             continue
         a_i = float(nodes[i]["CITIZENS"])
         a_j = float(nodes[j]["CITIZENS"])
-        H.add_edge(nodes_dict[i], nodes_dict[j], u=((a_i * a_j) / d**exponent))
+        H.add_edge(nodes_dict[i], nodes_dict[j], u=((a_i * a_j) / d))
     new_weights = {}
     for i, j, data in H.edges(data=True):
         new_weights[(i, j)] = data["u"]
@@ -45,7 +49,10 @@ def build_regions_graph(full=False, exponent=1.0):
     return H
 
 
-def build_gnutella_graph(version):
+def build_gnutella_graph(version: int) -> nx.Graph:
+    """
+    Builds gnutella p2p graph from txt data for version `version`
+    """
     file = f"data/p2p/p2p-Gnutella{version:02d}.txt"
     G = nx.Graph()
     with open(file, "r") as f:
@@ -62,7 +69,10 @@ def build_gnutella_graph(version):
     return G
 
 
-def load_csvs(ride_pooling_date):
+def load_csvs(ride_pooling_date: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Loads ride pooling data for a given date
+    """
     requests_csv = f"data/ride-pooling/{ride_pooling_date}/requests.csv"
     rides_csv = f"data/ride-pooling/{ride_pooling_date}/rides.csv"
     requests = pd.read_csv(requests_csv, index_col=0)
@@ -71,7 +81,10 @@ def load_csvs(ride_pooling_date):
     return requests, rides
 
 
-def build_shareability_graph(requests, rides) -> nx.Graph:
+def build_shareability_graph(requests: pd.DataFrame, rides: pd.DataFrame) -> nx.Graph:
+    """
+    Builds shareability graph from requests and rides csv files
+    """
     G = nx.Graph()
     G.add_nodes_from(requests.index)
     edges = []
@@ -116,6 +129,9 @@ def match(
     requests: pd.DataFrame,
     matching_obj: str = "u_veh",
 ) -> Dict:
+    """
+    Calculates optimal matching of rides based on requests
+    """
     request_indexes = {}
     request_indexes_inv = {}
     for i, index in enumerate(requests.index.values):
@@ -136,9 +152,7 @@ def match(
             ret[request_indexes[i]] = 1
         return ret
 
-    rides["row"] = rides.apply(
-        add_binary_row, axis=1
-    )  # row to be used as constrain in optimization
+    rides["row"] = rides.apply(add_binary_row, axis=1)  # row to be used as constrain in optimization
     m = np.vstack(rides["row"].values).T  # creates a numpy array for the constrains
 
     rides["index"] = rides.index.copy()
@@ -148,9 +162,7 @@ def match(
     # optimization
     prob = pulp.LpProblem("Matchingproblem", pulp.LpMinimize)  # problem
 
-    variables = pulp.LpVariable.dicts(
-        "r", (i for i in rides.index), cat="Binary"
-    )  # decision variables
+    variables = pulp.LpVariable.dicts("r", (i for i in rides.index), cat="Binary")  # decision variables
 
     cost_col = matching_obj
     if cost_col == "degree":
@@ -168,17 +180,13 @@ def match(
     j = 0  # adding constrains
     for imr in m:
         j += 1
-        prob += pulp.lpSum(
-            [imr[i] * variables[i] for i in variables if imr[i] > 0]
-        ) == 1, "c" + str(j)
+        prob += pulp.lpSum([imr[i] * variables[i] for i in variables if imr[i] > 0]) == 1, "c" + str(j)
 
     solver = pulp.get_solver(solver_for_pulp())
     solver.msg = False
     prob.solve(solver)
 
-    assert (
-        pulp.value(prob.objective) <= sum(costs[:nR]) + 2
-    )  # we did not go above original
+    assert pulp.value(prob.objective) <= sum(costs[:nR]) + 2  # we did not go above original
 
     locs = {}
     for variable in prob.variables():
@@ -198,6 +206,9 @@ def solver_for_pulp() -> str:
 
 
 def calculate_results(rides: pd.DataFrame, requests: pd.DataFrame) -> float:
+    """
+    Evaluates optimal matching of rides based on requests
+    """
     match(rides, requests)
     fin = rides.loc[rides["selected"] == 1]
     return sum(fin["PassSecTrav_ns"]) - sum(fin["u_veh"])
@@ -206,9 +217,29 @@ def calculate_results(rides: pd.DataFrame, requests: pd.DataFrame) -> float:
 EPS = 1e-15
 
 
-def just_balance_pool(x, adj, s, mask=None, normalize=True):
-    r"""The Just Balance pooling operator from the `"Simplifying Clustering with
-    Graph Neural Networks" <https://arxiv.org/abs/2207.08779>`_ paper copied from https://github.com/FilippoMB/Simplifying-Clustering-with-Graph-Neural-Networks/tree/main
+def just_balance_pool(
+    x: torch.Tensor, adj: torch.Tensor, s: torch.Tensor, mask: torch.Tensor = None, normalize: bool = True
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    r"""
+    Applies the Just Balance pooling operator from the
+    `"Simplifying Clustering with Graph Neural Networks" <https://arxiv.org/abs/2207.08779>`_ paper.
+
+    This operator performs a soft clustering of node features and aggregates the graph structure
+    accordingly. Implementation adapted from the original GitHub repository:
+    https://github.com/FilippoMB/Simplifying-Clustering-with-Graph-Neural-Networks
+
+    Args:
+        x (torch.Tensor): Node feature matrix of shape [N, F], where N is the number of nodes and F is the number of features.
+        adj (torch.Tensor): Adjacency matrix of shape [N, N], typically sparse or dense float tensor.
+        s (torch.Tensor): Soft assignment matrix of shape [N, K], where K is the number of clusters.
+        mask (torch.Tensor, optional): Mask tensor of shape [N] indicating which nodes are valid (useful for batching).
+        normalize (bool, optional): If True, normalizes the assignment matrix `s`. Default is True.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            - Node feature matrix of shape
+            - Adjacency matrix.
+            - Loss term
     """
 
     x = x.unsqueeze(0) if x.dim() == 2 else x
@@ -243,7 +274,7 @@ def just_balance_pool(x, adj, s, mask=None, normalize=True):
     return out, out_adj, loss
 
 
-def _rank3_trace(x):
+def _rank3_trace(x: torch.Tensor) -> torch.Tensor:
     return torch.einsum("ijj->i", x)
 
 
@@ -251,7 +282,10 @@ def get_cluster(clusters: pd.DataFrame, idx: int) -> int:
     return clusters.iloc[idx].cluster
 
 
-def calculate_regions_metric(clusters=None):
+def calculate_regions_metric(clusters: Optional[pd.DataFrame] = None):
+    """
+    Calculates evaluation metric for the regions network
+    """
     res = 0.0
     H = nx.read_graphml("data/regions/graph.graphml")
     dist = pd.read_csv("data/regions/dist_matrix.csv", index_col=0)
@@ -264,9 +298,7 @@ def calculate_regions_metric(clusters=None):
             if ("CITIZENS" not in nodes[i]) or ("CITIZENS" not in nodes[j]):
                 continue
             if clusters is not None:
-                if get_cluster(clusters, nodes_dict[int(i)]) != get_cluster(
-                    clusters, nodes_dict[int(j)]
-                ):
+                if get_cluster(clusters, nodes_dict[int(i)]) != get_cluster(clusters, nodes_dict[int(j)]):
                     continue
             d = dist[str(i)][int(j)]
             a_i = float(nodes[i]["CITIZENS"])

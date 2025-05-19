@@ -1,6 +1,8 @@
 """
 Implementation of GNN model.
 """
+from typing import Dict, List
+
 import torch
 import torch.nn.functional as F
 
@@ -11,22 +13,34 @@ from torch_geometric.nn import DMoNPooling, GCNConv, Sequential, dense_mincut_po
 import numpy as np
 import utils
 
-
 class GNN(torch.nn.Module):
     """
-    Based on https://github.com/FilippoMB/Simplifying-Clustering-with-Graph-Neural-Networks.
+    Code is based on https://github.com/FilippoMB/Simplifying-Clustering-with-Graph-Neural-Networks.
+    This class is adapted to handle DEEN, DMoN, Just Balance GNN and MinCutPool
+
+     Args:
+        mp_units (List[int]): Sizes of hidden layers in the message-passing component.
+        mp_act (str): Activation function used after each message-passing layer.
+        in_channels (int): Number of input node features.
+        n_clusters (int): Number of clusters to learn
+        mlp_units (List[int]): Sizes of hidden layers in the MLP head.
+        mlp_act (str): Activation function used after each MLP layer.
+        dmon (bool): If True, include a DMoN clustering head.
+        kappa  (List[float]): Regularization coefficient for eight loss weights (to prevent calculating unnecessary losses).
+        Each weight correspondes to specrtal, othognal and clustering loss (DMoN losses), Just Balance GNN loss,
+        epidemic threshold loss, mincut and orthogonal loss (MinCutPool losses), similarity loss, respectively.
     """
 
     def __init__(
         self,
-        mp_units,
-        mp_act,
-        in_channels,
-        n_clusters,
-        mlp_units,
-        mlp_act,
-        dmon,
-        kappa,
+        mp_units: List[int],
+        mp_act: str,
+        in_channels: int,
+        n_clusters: int,
+        mlp_units: List[int],
+        mlp_act: str,
+        dmon: bool,
+        kappa: List[float],
     ):
         super().__init__()
 
@@ -64,14 +78,34 @@ class GNN(torch.nn.Module):
             self.dmon = None
         assert out_chan == n_clusters
 
+    def forward(
+        self,
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_weight: torch.Tensor,
+        components: np.array,
+        unique: np.array,
+        counts: np.array,
+    ) -> Dict[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the model.
 
-    def forward(self, x, edge_index, edge_weight, components, unique, counts):
+        Args:
+            x (torch.Tensor): Node feature matrix of shape [N, F], where N is the number of nodes and F is the number of features.
+            edge_index (torch.Tensor): Edge indices in COO format with shape [2, E], where E is the number of edges.
+            edge_weight (torch.Tensor): Edge weights of shape [E].
+            components (np.array): Array indicating connected component membership for each node.
+            unique (np.Array): Component IDs
+            counts (np.Array): Number of nodes in each connected component.
+
+        Returns:
+            torch.Tensor: Cluster assignments
+            Dict[torch.Tensor]: Dictionary with loss terms
+        """
         device = x.device
         x = self.mp(x, edge_index, edge_weight)
         s = self.mlp(x)
-        adj = geo_utils.to_dense_adj(
-                edge_index, edge_attr=edge_weight, max_num_nodes=x.shape[0]
-            )[0]
+        adj = geo_utils.to_dense_adj(edge_index, edge_attr=edge_weight, max_num_nodes=x.shape[0])[0]
         adj = torch.nn.functional.relu(adj, inplace=True)
 
         # DMoN losses
@@ -100,10 +134,7 @@ class GNN(torch.nn.Module):
             soft = soft.to(device)
             eye = torch.eye(adj.shape[0]).float()  # .to(device)
             adj_wth_loops = (adj > 0).float() - eye
-            sas = (
-                torch.mm(torch.mm(soft.T, adj_wth_loops.to(device)).T, soft.T).cpu()
-                + eye
-            )
+            sas = torch.mm(torch.mm(soft.T, adj_wth_loops.to(device)).T, soft.T).cpu() + eye
 
             epidemic_thr_loss = []
             N = adj.shape[0]
@@ -122,13 +153,9 @@ class GNN(torch.nn.Module):
         if self.kappa[5] != 0 or self.kappa[6] != 0:
             x, adj, s = x.cpu(), adj.cpu(), s.cpu()
             _, _, mincut_mc_loss, mincut_orth_loss = dense_mincut_pool(x, adj, s)
-            mincut_mc_loss, mincut_orth_loss = mincut_mc_loss.to(
-                device
-            ), mincut_orth_loss.to(device)
+            mincut_mc_loss, mincut_orth_loss = mincut_mc_loss.to(device), mincut_orth_loss.to(device)
         else:
-            mincut_mc_loss, mincut_orth_loss = torch.zeros(
-                [], device=device
-            ), torch.zeros([], device=device)
+            mincut_mc_loss, mincut_orth_loss = torch.zeros([], device=device), torch.zeros([], device=device)
 
         if self.kappa[7] != 0:
             adj = adj.cpu()

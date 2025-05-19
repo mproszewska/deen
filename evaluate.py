@@ -1,6 +1,7 @@
 """
 Script for evaluation.
 """
+
 import argparse
 
 from collections import Counter
@@ -12,16 +13,17 @@ import pandas as pd
 
 import utils
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(description="Evaluation code for clustering methods")
 parser.add_argument(
-    "--dataset", type=str, required=True, choices=["ride-pooling", "p2p", "regions"]
+    "--dataset", type=str, required=True, choices=["ride-pooling", "p2p", "regions"], help="Dataset type"
 )
-parser.add_argument("--ride-pooling-date", type=str, required=False)
-parser.add_argument("--gnutella-version", type=int, default=None)
-parser.add_argument("--clusters-csv", type=str, required=True)
+parser.add_argument("--ride-pooling-date", type=str, required=False, help="Date for ride pooling network")
+parser.add_argument("--gnutella-version", type=int, default=None, help="Version of Gnutella p2p network")
+parser.add_argument("--clusters-csv", type=str, required=True, help="Number of clusters")
 args = parser.parse_args()
 print(args)
 
+# Load the network data
 if args.dataset == "regions":
     G = utils.build_regions_graph()
     base_res = utils.calculate_regions_metric()
@@ -38,6 +40,7 @@ else:
 clusters = pd.read_csv(args.clusters_csv, index_col=0)
 num_edges = len(G.edges)
 
+# Remove edges between clusters
 to_remove = []
 for edge in G.edges:
     if utils.get_cluster(clusters, edge[0]) != utils.get_cluster(clusters, edge[1]):
@@ -46,6 +49,7 @@ for edge in G.edges:
 for edge in to_remove:
     G.remove_edge(*edge)
 
+# Evaluate the utility score
 if args.dataset == "regions":
     new_res = utils.calculate_regions_metric(clusters)
 elif args.dataset == "p2p":
@@ -60,6 +64,7 @@ elif args.dataset == "ride-pooling":
 else:
     raise ValueError(f"Invalid dataset: {args.dataset}")
 
+# Print results in csv format
 cl_counter = Counter(clusters["cluster"]).items()
 cl_mean = np.mean([s for _, s in cl_counter])
 cl_std = np.std([s for _, s in cl_counter])
@@ -73,9 +78,7 @@ for c in nx.connected_components(G.to_undirected()):
     S = G.subgraph(c).copy()
     d = np.array([v for k, v in dict(S.degree).items()])
     comp_size[comp_num] = len(S)
-    comp_epidemic_thr[comp_num] = (
-        round(np.mean(d) / np.mean(d**2), 1) if np.mean(d) != 0 else 1
-    )
+    comp_epidemic_thr[comp_num] = round(np.mean(d) / np.mean(d**2), 1) if np.mean(d) != 0 else 1
     comp_num += 1
 
 expect_epidemic_thr, N = 0, len(G.nodes)
