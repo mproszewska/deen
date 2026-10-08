@@ -60,3 +60,31 @@ python evaluate.py \
 ```
 In order to find the optimal number of clusters, run binary search alternating between `train.py` and `evaluate.py`.
 This code can be used to train baselines: DMoN, Just Balance GNN and MinCutPool.
+
+### Citation
+
+This repository accompanies:
+
+M. Proszewska, M. Bujak, R. Kucharski, J. Tabor, and M. Smieja.
+Optimising network efficiency in an epidemic scenario.
+Social Network Analysis and Mining, 16, 2 (2025).
+https://doi.org/10.1007/s13278-025-01523-x
+
+If you use this code, please cite the paper:
+
+<details> <summary>BibTeX</summary>
+
+@article{Proszewska2025Optimising,
+  author  = {Proszewska, Magdalena and Bujak, Michal and Kucharski, Rafal
+             and Tabor, Jacek and Smieja, Marek},
+  title   = {Optimising network efficiency in an epidemic scenario},
+  journal = {Social Network Analysis and Mining},
+  year    = {2025},
+  volume  = {16},
+  number  = {1},
+  pages   = {2},
+  doi     = {10.1007/s13278-025-01523-x}
+}
+
+
+</details>
